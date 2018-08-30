@@ -9,6 +9,8 @@ Install the Go way:
 go get -u github.com/ecarter202/godress
 ```
 
+## Using
+
 `````go
 package main
 

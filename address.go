@@ -23,6 +23,7 @@ const (
 	NUMBER_REGEX      = `(?m)(\d+)`
 )
 
+// Parses string into separate parts.
 func Parse(address string) (*Address, error) {
 	a := &Address{}
 
@@ -75,6 +76,38 @@ func Parse(address string) (*Address, error) {
 	a.City = strings.TrimRight(a.City, " ")
 
 	return a, nil
+}
+
+// Attempts to extract an address from a string with surrounding words.
+func Extract(in string) string {
+	address_min_characters := 2
+	s := strings.Replace(in, "  ", " ", -1)
+	x := strings.Split(s, " ")
+
+	for i := 0; i <= len(x); i++ {
+		str := func(words []string, offset int) string {
+
+			loops := len(words) - offset
+			for i := 0; i < loops; i++ {
+				// Enough words for an address
+				if len(words[i:loops]) > address_min_characters {
+					str := strings.Join(words[i:loops], " ")
+					addr, _ := Parse(str)
+					if addr.StreetType != "" && addr.HouseNumber != 0 {
+						return str
+					}
+				}
+			}
+
+			return ""
+		}(x, i)
+
+		if str != "" {
+			return str
+		}
+	}
+
+	return ""
 }
 
 // Checks address string for indication of

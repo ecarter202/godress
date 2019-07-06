@@ -7,17 +7,18 @@ import (
 )
 
 type Address struct {
-	Original        string  `json:"original"`
-	HouseNumber     int     `json:"house_number"`
-	StreetDirection string  `json:"street_direction"`
-	StreetName      string  `json:"street_name"`
-	StreetType      string  `json:"street_type"`
-	Unit            string  `json:"unit"`
-	City            string  `json:"city"`
-	State           string  `json:"state"`
-	Zip             int     `json:"zip"`
-	Latitude        float64 `json:"latitude"`
-	Longitude       float64 `json:"longitude"`
+	Original        string  `arango:"original" json:"original"`
+	HouseNumber     int     `arango:"house_number" json:"house_number"`
+	StreetDirection string  `arango:"street_direction" json:"street_direction"`
+	StreetName      string  `arango:"street_name" json:"street_name"`
+	StreetType      string  `arango:"street_type" json:"street_type"`
+	Unit            string  `arango:"unit" json:"unit"`
+	City            string  `arango:"city" json:"city"`
+	County          string  `arango:"county" json:"county"`
+	State           string  `arango:"state" json:"state"`
+	Zip             int     `arango:"zip" json:"zip"`
+	Latitude        float64 `arango:"latitude" json:"latitude"`
+	Longitude       float64 `arango:"longitude" json:"longitude"`
 }
 
 const (
@@ -27,9 +28,8 @@ const (
 )
 
 var (
-	states           = []string{"ALABAMA", "AL", "ALASKA", "AK", "ARIZONA", "AZ", "ARKANSAS", "AR", "CALIFORNIA", "CA", "COLORADO", "CO", "CONNECTICUT", "CT", "DELAWARE", "DE", "FLORIDA", "FL", "GEORGIA", "GA", "HAWAII", "HI", "IDAHO", "ID", "ILLINOIS", "IL", "INDIANA", "IN", "IOWA", "IA", "KANSAS", "KS", "KENTUCKY", "KY", "LOUISIANA", "LA", "MAINE", "ME", "MARYLAND", "MD", "MASSACHUSETTS", "MA", "MICHIGAN", "MI", "MINNESOTA", "MN", "MISSISSIPPI", "MS", "MISSOURI", "MO", "MONTANA", "MT", "NEBRASKA", "NE", "NEVADA", "NV", "NEW HAMPSHIRE", "NH", "NEW JERSEY", "NJ", "NEW MEXICO", "NM", "NEW YORK", "NY", "NORTH CAROLINA", "NC", "NORTH DAKOTA", "ND", "OHIO", "OH", "OKLAHOMA", "OK", "OREGON", "OR", "PENNSYLVANIA", "PA", "RHODE ISLAND", "RI", "SOUTH CAROLINA", "SC", "SOUTH DAKOTA", "SD", "TENNESSEE", "TN", "TEXAS", "TX", "UTAH", "UT", "VERMONT", "VT", "VIRGINIA", "VA", "WASHINGTON", "WA", "WEST VIRGINIA", "WV", "WISCONSIN", "WI", "WYOMING", "WY"}
-	streetTypes      = []string{"ALY", "ANX", "AVE", "BLVD", "CIR", "CT", "CV", "CRES", "DR", "EXPY", "EXT", "GRV", "HWY", "HL", "KY", "LN", "LOOP", "MALL", "PARK", "PKWY", "PL", "PLZ", "PT", "RD", "ROW", "RUN", "SQ", "ST", "TER", "TRCE", "TRL", "WAY", "ZZ"}
-	streetDirections = []string{"N", "NW", "NE", "S", "SW", "SE", "E", "W"}
+	StreetTypes      = []string{"ALY", "ANX", "AVE", "BLVD", "CIR", "CT", "CV", "CRES", "DR", "EXPY", "EXT", "GRV", "HWY", "HL", "KY", "LN", "LOOP", "MALL", "PARK", "PKWY", "PL", "PLZ", "PT", "RD", "ROW", "RUN", "SQ", "ST", "TER", "TRCE", "TRL", "WAY", "ZZ"}
+	StreetDirections = []string{"N", "NW", "NE", "S", "SW", "SE", "E", "W"}
 )
 
 // Parses string into separate parts.
@@ -62,16 +62,16 @@ func Parse(address string) (*Address, error) {
 		} else if isApartmentKeyword(s) && a.Unit == "" {
 			if idx+1 < len(addressX) {
 				a.Unit = addressX[idx+1]
-				idx += 1
+				idx++
 			}
 		} else if IsState(s) && len(s) == 2 {
 			a.State = s
 		} else if IsZipcode(s) && a.State != "" {
 			a.Zip, _ = strconv.Atoi(s)
-		} else if (a.StreetDirection != "" || idx == 1) && a.StreetType == "" && a.Unit == "" {
+		} else if (a.StreetDirection != "" || idx == 1) && a.StreetType == "" && a.Unit == "" && (idx > 0 && !IsStreetDirection(strings.Split(strings.TrimSpace(a.StreetName), " ")[len(strings.Split(strings.TrimSpace(a.StreetName), " "))-1])) && a.City == "" {
 			// is street name
 			a.StreetName += (s + " ")
-		} else if (a.StreetType != "" || IsPoBox(address) || IsApartment(address)) && a.State == "" && len(s) >= 2 {
+		} else if (a.StreetType != "" || IsPoBox(address) || IsApartment(address) || (idx > 0 && IsStreetDirection(strings.Split(strings.TrimSpace(a.StreetName), " ")[len(strings.Split(strings.TrimSpace(a.StreetName), " "))-1]))) && a.State == "" && len(s) >= 2 {
 			// is city
 			a.City += (s + " ")
 		} else if a.StreetType != "" && a.StreetName == "" {
@@ -87,9 +87,9 @@ func Parse(address string) (*Address, error) {
 	return a, nil
 }
 
-// Attempts to extract an address from a string with surrounding words.
+// Extract attempts to extract an address from a string with surrounding words.
 func Extract(in string) string {
-	address_min_characters := 2
+	addressMinCharacters := 2
 	s := strings.Replace(in, "  ", " ", -1)
 	x := strings.Split(s, " ")
 
@@ -99,7 +99,7 @@ func Extract(in string) string {
 			loops := len(words) - offset
 			for i := 0; i < loops; i++ {
 				// Enough words for an address
-				if len(words[i:loops]) > address_min_characters {
+				if len(words[i:loops]) > addressMinCharacters {
 					str := strings.Join(words[i:loops], " ")
 					addr, _ := Parse(str)
 					if addr.StreetType != "" && addr.HouseNumber != 0 {
@@ -137,21 +137,9 @@ func IsApartment(s string) bool {
 // Checks address string for indication of
 // being a po box.
 func IsPoBox(s string) bool {
-	s = strings.Replace(s, " ", "", -1)
+	s = strings.NewReplacer(" ", "", ".", "").Replace(s)
 
 	return strings.Contains(strings.ToUpper(s), "POBOX")
-}
-
-// Tries to match string with possible U.S. state abbreviations
-// and state names.
-func IsState(s string) bool {
-	for _, value := range states {
-		if strings.ToUpper(s) == value {
-			return true
-		}
-	}
-
-	return false
 }
 
 // Determines if string is a valid zip code
@@ -169,7 +157,7 @@ func IsZipcode(s string) bool {
 // Tries to match string with possible street types
 // found in the U.S. (military excluded, I believe)
 func IsStreetType(s string) bool {
-	for _, value := range streetTypes {
+	for _, value := range StreetTypes {
 		if strings.ToUpper(s) == value {
 			return true
 		}
@@ -181,8 +169,8 @@ func IsStreetType(s string) bool {
 // Tries to match string with possible street directions
 // found in the U.S.
 func IsStreetDirection(s string) bool {
-	for _, value := range streetDirections {
-		if strings.ToUpper(s) == value {
+	for _, value := range StreetDirections {
+		if strings.ToUpper(strings.TrimSpace(s)) == value {
 			return true
 		}
 	}

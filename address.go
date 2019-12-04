@@ -1,6 +1,7 @@
 package godress
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,8 +18,8 @@ type Address struct {
 	County          string  `arango:"county" json:"county"`
 	State           string  `arango:"state" json:"state"`
 	Zip             int     `arango:"zip" json:"zip"`
-	Latitude        float64 `arango:"latitude" json:"latitude"`
-	Longitude       float64 `arango:"longitude" json:"longitude"`
+	Latitude        float64 `arango:"latitude,omitempty" json:"latitude,omitempty"`
+	Longitude       float64 `arango:"longitude,omitempty" json:"longitude,omitempty"`
 }
 
 const (
@@ -66,8 +67,8 @@ func Parse(address string) (*Address, error) {
 			}
 		} else if IsState(s) && len(s) == 2 {
 			a.State = s
-		} else if IsZipcode(s) && a.State != "" {
-			a.Zip, _ = strconv.Atoi(s)
+		} else if IsZipcode(s) && a.State != "" && a.Zip == 0 {
+			a.Zip, _ = strconv.Atoi(strings.Split(s, "-")[0])
 		} else if (a.StreetDirection != "" || idx == 1) && a.StreetType == "" && a.Unit == "" && (idx > 0 && !IsStreetDirection(strings.Split(strings.TrimSpace(a.StreetName), " ")[len(strings.Split(strings.TrimSpace(a.StreetName), " "))-1])) && a.City == "" {
 			// is street name
 			a.StreetName += (s + " ")
@@ -184,9 +185,13 @@ func (a *Address) String() string {
 	if a.StreetName == "PO Box" {
 		address = a.StreetName + " " + strconv.Itoa(a.HouseNumber)
 	} else {
-		address = strconv.Itoa(a.HouseNumber) + " " + a.StreetDirection + " " + a.StreetName + " " + a.StreetType
+		if strings.ToUpper(a.State) == "WA" || strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetDirection)) > strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetType)) && a.StreetDirection != "" {
+			address = fmt.Sprintf("%v %s %s %s", a.HouseNumber, a.StreetName, a.StreetType, a.StreetDirection)
+		} else {
+			address = fmt.Sprintf("%v %s %s %s", a.HouseNumber, a.StreetDirection, a.StreetName, a.StreetType)
+		}
 		if a.Unit != "" {
-			address += " # " + a.Unit
+			address += " #" + a.Unit
 		}
 	}
 	address = strings.TrimSpace(address)
@@ -210,9 +215,13 @@ func (a *Address) Street() string {
 	if a.StreetName == "PO Box" {
 		address = a.StreetName + " " + strconv.Itoa(a.HouseNumber)
 	} else {
-		address = strconv.Itoa(a.HouseNumber) + " " + a.StreetDirection + " " + a.StreetName + " " + a.StreetType
+		if strings.ToUpper(a.State) == "WA" || strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetDirection)) > strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetType)) && a.StreetDirection != "" {
+			address = fmt.Sprintf("%v %s %s %s", a.HouseNumber, a.StreetName, a.StreetType, a.StreetDirection)
+		} else {
+			address = fmt.Sprintf("%v %s %s %s", a.HouseNumber, a.StreetDirection, a.StreetName, a.StreetType)
+		}
 		if a.Unit != "" {
-			address += " # " + a.Unit
+			address += " #" + a.Unit
 		}
 	}
 	address = strings.TrimSpace(address)

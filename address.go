@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// Address represents a street address' parts.
 type Address struct {
 	Original        string  `arango:"original" json:"original"`
 	HouseNumber     int     `arango:"house_number" json:"house_number"`
@@ -23,21 +24,24 @@ type Address struct {
 }
 
 const (
-	SMALLEST_ZIP_CODE = "01001"
-	LARGEST_ZIP_CODE  = "99950"
-	NUMBER_REGEX      = `(?m)(\d+)`
+	smallestZipCode = "01001"
+	largestZipCode  = "99950"
+	numberRegex     = `(?m)(\d+)`
 )
 
-var (
-	StreetTypes      = []string{"ALY", "ANX", "AVE", "BLVD", "CIR", "CT", "CV", "CRES", "DR", "EXPY", "EXT", "GRV", "HWY", "HL", "KY", "LN", "LOOP", "MALL", "PARK", "PKWY", "PL", "PLZ", "PT", "RD", "ROW", "RUN", "SQ", "ST", "TER", "TRCE", "TRL", "WAY", "ZZ"}
-	StreetDirections = []string{"N", "NW", "NE", "S", "SW", "SE", "E", "W"}
-)
+// MustParse parses the address, ignoring any errors.
+func MustParse(address string) (addr *Address) {
+	addr, _ = Parse(address)
 
-// Parses string into separate parts.
+	return addr
+}
+
+// Parse parses a string into an address struct.
 func Parse(address string) (*Address, error) {
 	a := &Address{}
 	a.Original = address
-	addressX := strings.FieldsFunc(address, split)
+	newAddress := strings.NewReplacer("  ", " ", ".", "").Replace(regexp.MustCompile(`(?s)\(.*\)`).ReplaceAllString(address, ""))
+	addressX := strings.FieldsFunc(newAddress, split)
 
 	for idx := 0; idx < len(addressX); idx++ {
 
@@ -49,7 +53,7 @@ func Parse(address string) (*Address, error) {
 				a.HouseNumber, _ = strconv.Atoi(s)
 			}
 		} else if IsPoBox(address) && a.HouseNumber == 0 {
-			re := regexp.MustCompile(NUMBER_REGEX)
+			re := regexp.MustCompile(numberRegex)
 			numbers := re.FindAllString(strings.Replace(address, " ", "", -1), -1)
 			if len(numbers) > 0 {
 				a.HouseNumber, _ = strconv.Atoi(numbers[0])
@@ -120,14 +124,13 @@ func Extract(in string) string {
 	return ""
 }
 
-// Checks address string for indication of
-// apt number.
+// IsApartment checks an address string for indication of apt number.
 func IsApartment(s string) bool {
 	sX := strings.FieldsFunc(s, split)
 
 	for _, s = range sX {
-		s = strings.ToUpper(strings.TrimSpace(s))
-		if s == "APT" || s == "#" || s == "UNIT" {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if _, ok := unitTerms[s]; ok {
 			return true
 		}
 	}
@@ -135,51 +138,26 @@ func IsApartment(s string) bool {
 	return false
 }
 
-// Checks address string for indication of
-// being a po box.
+// IsPoBox checks an address string for indication of being a POBox.
 func IsPoBox(s string) bool {
 	s = strings.NewReplacer(" ", "", ".", "").Replace(s)
 
 	return strings.Contains(strings.ToUpper(s), "POBOX")
 }
 
-// Determines if string is a valid zip code
+// IsZipcode determines if a string is a valid zip code
 // or not. (trailing +4 is removed)
 func IsZipcode(s string) bool {
 	s = strings.Split(s, "-")[0]
 
-	if isInt(s) && len(s) == 5 && s >= SMALLEST_ZIP_CODE && s <= LARGEST_ZIP_CODE {
+	if isInt(s) && len(s) == 5 && s >= smallestZipCode && s <= largestZipCode {
 		return true
 	}
 
 	return false
 }
 
-// Tries to match string with possible street types
-// found in the U.S. (military excluded, I believe)
-func IsStreetType(s string) bool {
-	for _, value := range StreetTypes {
-		if strings.ToUpper(s) == value {
-			return true
-		}
-	}
-
-	return false
-}
-
-// Tries to match string with possible street directions
-// found in the U.S.
-func IsStreetDirection(s string) bool {
-	for _, value := range StreetDirections {
-		if strings.ToUpper(strings.TrimSpace(s)) == value {
-			return true
-		}
-	}
-
-	return false
-}
-
-// Formats an address to string.
+// String formats an address, returning it as a string.
 func (a *Address) String() string {
 	var address string
 	if a.StreetName == "PO Box" {
@@ -209,10 +187,14 @@ func (a *Address) String() string {
 	return strings.Replace(address, "  ", " ", -1)
 }
 
-// Formats an address to string (street only).
+// Street formats an address to string (street only).
 func (a *Address) Street() string {
 	var address string
-	if a.StreetName == "PO Box" {
+	if a == nil {
+		return ""
+	} else if !strings.EqualFold(a.Original, "") {
+		return strings.Split(a.Original, a.City)[0]
+	} else if a.StreetName == "PO Box" {
 		address = a.StreetName + " " + strconv.Itoa(a.HouseNumber)
 	} else {
 		if strings.ToUpper(a.State) == "WA" || strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetDirection)) > strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetType)) && a.StreetDirection != "" {
@@ -229,9 +211,7 @@ func (a *Address) Street() string {
 	return strings.Replace(address, "  ", " ", -1)
 }
 
-// Checks string for apartment keyword.
 func isApartmentKeyword(s string) bool {
-
 	s = strings.ToUpper(strings.TrimSpace(s))
 	if s == "APT" || s == "#" || s == "UNIT" {
 		return true
@@ -240,18 +220,12 @@ func isApartmentKeyword(s string) bool {
 	return false
 }
 
-// Determines if string is an integer.
 func isInt(s string) bool {
 	_, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return false
-	}
 
-	return true
+	return err == nil
 }
 
-// split func for strings.FieldsFunc splitting
-// up an address into separate parts.
 func split(r rune) bool {
 	return r == ',' || r == ' '
 }

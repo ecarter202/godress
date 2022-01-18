@@ -1,16 +1,28 @@
 package godress
 
 import (
+	"crypto/md5"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
+const (
+	smallestZipCode    = "01001"
+	largestZipCode     = "99950"
+	numberRegexPattern = `(?m)(\d+)`
+)
+
+var (
+	numberRegex = regexp.MustCompile(numberRegexPattern)
+)
+
 // Address represents a street address' parts.
 type Address struct {
+	Hash            string  `arango:"hash" json:"hash"`
 	Original        string  `arango:"original" json:"original"`
-	HouseNumber     int     `arango:"house_number" json:"house_number"`
+	HouseNumber     string  `arango:"house_number" json:"house_number"`
 	StreetDirection string  `arango:"street_direction" json:"street_direction"`
 	StreetName      string  `arango:"street_name" json:"street_name"`
 	StreetType      string  `arango:"street_type" json:"street_type"`
@@ -18,16 +30,11 @@ type Address struct {
 	City            string  `arango:"city" json:"city"`
 	County          string  `arango:"county" json:"county"`
 	State           string  `arango:"state" json:"state"`
-	Zip             int     `arango:"zip" json:"zip"`
+	PostalCode      string  `arango:"postal_code" json:"postal_code"`
+	Country         string  `arango:"country" json:"country"`
 	Latitude        float64 `arango:"latitude,omitempty" json:"latitude,omitempty"`
 	Longitude       float64 `arango:"longitude,omitempty" json:"longitude,omitempty"`
 }
-
-const (
-	smallestZipCode = "01001"
-	largestZipCode  = "99950"
-	numberRegex     = `(?m)(\d+)`
-)
 
 // MustParse parses the address, ignoring any errors.
 func MustParse(address string) (addr *Address) {
@@ -37,57 +44,86 @@ func MustParse(address string) (addr *Address) {
 }
 
 // Parse parses a string into an address struct.
-func Parse(address string) (*Address, error) {
-	a := &Address{}
-	a.Original = address
-	newAddress := strings.NewReplacer("  ", " ", ".", "").Replace(regexp.MustCompile(`(?s)\(.*\)`).ReplaceAllString(address, ""))
-	addressX := strings.FieldsFunc(newAddress, split)
+func Parse(address string) (a *Address, err error) {
+	stripped := regexp.MustCompile(`/\s+/ /`).ReplaceAllString(address, "")
+	stripped = regexp.MustCompile(`\.`).ReplaceAllString(stripped, "")
+	stripped = strings.ToUpper(stripped)
 
-	for idx := 0; idx < len(addressX); idx++ {
+	a = &Address{Original: stripped}
+	a.Hash = fmt.Sprintf("%x", md5.Sum([]byte(stripped)))
 
-		s := addressX[idx]
-		s = strings.TrimSpace(s)
+	x := strings.FieldsFunc(stripped, split)
 
-		if idx == 0 && !IsPoBox(address) {
-			if isInt(s) {
-				a.HouseNumber, _ = strconv.Atoi(s)
+	if IsPoBox(address) {
+		a, err = parsePoBox(a, x)
+
+		return
+	}
+
+	var (
+		currentValue string
+		cityWords    []string
+	)
+
+	for i := 0; i < len(x); i++ {
+		currentValue = x[i]
+		if i == 0 {
+			if isInt(currentValue) {
+				a.HouseNumber = currentValue
 			}
-		} else if IsPoBox(address) && a.HouseNumber == 0 {
-			re := regexp.MustCompile(numberRegex)
-			numbers := re.FindAllString(strings.Replace(address, " ", "", -1), -1)
-			if len(numbers) > 0 {
-				a.HouseNumber, _ = strconv.Atoi(numbers[0])
+		} else if IsStreetDirection(currentValue) && a.StreetDirection == "" {
+			a.StreetDirection = currentValue
+		} else if len(cityWords) == 0 && IsStreetType(currentValue) && a.Unit == "" {
+			a.StreetType = currentValue
+		} else if isApartmentKeyword(currentValue) && a.Unit == "" {
+			if i+1 < len(x) {
+				a.Unit = x[i+1]
+				i++
 			}
-			a.StreetName = "PO Box"
-			idx += 2
-		} else if IsStreetDirection(s) && a.StreetDirection == "" {
-			a.StreetDirection = s
-		} else if IsStreetType(s) && a.Unit == "" {
-			a.StreetType = s
-		} else if isApartmentKeyword(s) && a.Unit == "" {
-			if idx+1 < len(addressX) {
-				a.Unit = addressX[idx+1]
-				idx++
-			}
-		} else if IsState(s) && len(s) == 2 {
-			a.State = s
-		} else if IsZipcode(s) && a.State != "" && a.Zip == 0 {
-			a.Zip, _ = strconv.Atoi(strings.Split(s, "-")[0])
-		} else if (a.StreetDirection != "" || idx == 1) && a.StreetType == "" && a.Unit == "" && (idx > 0 && !IsStreetDirection(strings.Split(strings.TrimSpace(a.StreetName), " ")[len(strings.Split(strings.TrimSpace(a.StreetName), " "))-1])) && a.City == "" {
-			// is street name
-			a.StreetName += (s + " ")
-		} else if (a.StreetType != "" || IsPoBox(address) || IsApartment(address) || (idx > 0 && IsStreetDirection(strings.Split(strings.TrimSpace(a.StreetName), " ")[len(strings.Split(strings.TrimSpace(a.StreetName), " "))-1]))) && a.State == "" && len(s) >= 2 {
-			// is city
-			a.City += (s + " ")
+		} else if IsState(currentValue) {
+			a.State = StateAbbreviation(currentValue)
+		} else if IsZipcode(currentValue) && a.State != "" && a.PostalCode == "" {
+			a.PostalCode = strings.Split(currentValue, "-")[0]
+		} else if (a.StreetDirection != "" || i == 1) && a.StreetType == "" && a.Unit == "" && (i > 0 && !IsStreetDirection(strings.Split(strings.TrimSpace(a.StreetName), " ")[len(strings.Split(strings.TrimSpace(a.StreetName), " "))-1])) && a.City == "" {
+			a.StreetName += (currentValue + " ")
+		} else if a.State == "" && len(currentValue) >= 2 {
+			cityWords = append(cityWords, currentValue)
 		} else if a.StreetType != "" && a.StreetName == "" {
-			a.StreetName += s
-		} else {
-			// fmt.Println("DIDN'T MAKE IT:", s)
+			a.StreetName += currentValue
+		}
+	}
+
+	a.StreetName = strings.TrimRight(a.StreetName, " ")
+	a.City = strings.Join(cityWords, " ")
+
+	return
+}
+
+func parsePoBox(a *Address, x []string) (*Address, error) {
+	var (
+		currentValue string
+		cityWords    []string
+	)
+
+	a.StreetName = "PO BOX"
+
+	for i := 0; i < len(x); i++ {
+		currentValue = x[i]
+		if currentValue == "PO" || currentValue == "BOX" {
+			continue
 		}
 
+		if a.HouseNumber == "" && isInt(currentValue) {
+			a.HouseNumber = currentValue
+		} else if IsState(currentValue) && len(currentValue) == 2 {
+			a.State = currentValue
+		} else if IsZipcode(currentValue) && a.State != "" && a.PostalCode == "" {
+			a.PostalCode = strings.Split(currentValue, "-")[0]
+		} else if len(currentValue) >= 2 {
+			cityWords = append(cityWords, currentValue)
+		}
 	}
-	a.StreetName = strings.TrimRight(a.StreetName, " ")
-	a.City = strings.TrimRight(a.City, " ")
+	a.City = strings.Join(cityWords, " ")
 
 	return a, nil
 }
@@ -107,7 +143,7 @@ func Extract(in string) string {
 				if len(words[i:loops]) > addressMinCharacters {
 					str := strings.Join(words[i:loops], " ")
 					addr, _ := Parse(str)
-					if addr.StreetType != "" && addr.HouseNumber != 0 {
+					if addr.StreetType != "" && addr.HouseNumber != "" {
 						return str
 					}
 				}
@@ -161,7 +197,7 @@ func IsZipcode(s string) bool {
 func (a *Address) String() string {
 	var address string
 	if a.StreetName == "PO Box" {
-		address = a.StreetName + " " + strconv.Itoa(a.HouseNumber)
+		address = a.StreetName + " " + a.HouseNumber
 	} else {
 		if strings.ToUpper(a.State) == "WA" || strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetDirection)) > strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetType)) && a.StreetDirection != "" {
 			address = fmt.Sprintf("%v %s %s %s", a.HouseNumber, a.StreetName, a.StreetType, a.StreetDirection)
@@ -180,8 +216,8 @@ func (a *Address) String() string {
 	if a.State != "" {
 		address += ", " + a.State
 	}
-	if a.Zip != 0 {
-		address += " " + strconv.Itoa(a.Zip)
+	if a.PostalCode != "" {
+		address += " " + a.PostalCode
 	}
 
 	return strings.Replace(address, "  ", " ", -1)
@@ -195,7 +231,7 @@ func (a *Address) Street() string {
 	} else if !strings.EqualFold(a.Original, "") {
 		return strings.Split(a.Original, a.City)[0]
 	} else if a.StreetName == "PO Box" {
-		address = a.StreetName + " " + strconv.Itoa(a.HouseNumber)
+		address = a.StreetName + " " + a.HouseNumber
 	} else {
 		if strings.ToUpper(a.State) == "WA" || strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetDirection)) > strings.Index(a.Original, fmt.Sprintf(" %s", a.StreetType)) && a.StreetDirection != "" {
 			address = fmt.Sprintf("%v %s %s %s", a.HouseNumber, a.StreetName, a.StreetType, a.StreetDirection)

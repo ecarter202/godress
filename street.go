@@ -3,7 +3,6 @@ package godress
 import (
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -15,7 +14,7 @@ var (
 
 // Street represents a street, as in a part of a street address.
 type Street struct {
-	HouseNumber     int    `json:"house_number"`
+	HouseNumber     string `json:"house_number"`
 	StreetDirection string `json:"street_direction"`
 	StreetName      string `json:"street_name"`
 	StreetType      string `json:"street_type"`
@@ -30,15 +29,15 @@ func ParseStreet(street string) *Street {
 		re := regexp.MustCompile("[0-9]+")
 		matches := re.FindStringSubmatch(street)
 		if len(matches) >= 1 {
-			s.HouseNumber, _ = strconv.Atoi(strings.TrimSpace(matches[0]))
+			s.HouseNumber = strings.TrimSpace(matches[0])
 		}
 		s.StreetName = "PO Box"
 		return s
 	} else {
 		streetX := strings.Split(strings.TrimSpace(street), " ")
-		s.HouseNumber, _ = strconv.Atoi(streetX[0])
+		s.HouseNumber = streetX[0]
 		for idx, value := range streetX {
-			if idx == 0 && s.HouseNumber != 0 {
+			if idx == 0 && s.HouseNumber != "" {
 				continue
 			} else if IsStreetDirection(value) {
 				s.StreetDirection = value
